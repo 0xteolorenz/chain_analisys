@@ -1,0 +1,11 @@
+{
+    "workbench.colorTheme": "Atom One Dark",
+    "window.zoomLevel": -1,
+    "[python]": {
+        "editor.formatOnType": true
+    },
+    "terminal.integrated.scrollback": 100000000,
+    "git.autofetch": true,
+    "tabnine.experimentalAutoImports": true,
+    "python.defaultInterpreterPath": "${workspaceFolder}\\.venv\\Scripts\\python.exe"
+}
