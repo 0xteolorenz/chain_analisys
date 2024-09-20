@@ -1,17 +1,19 @@
+"""imports"""
+
 import logging
 import os
 from dotenv import load_dotenv
 
+from bitcoinrpc.authproxy import AuthServiceProxy, JSONRPCException
+
 from chain_analisys.parser.cl_parser import build_argument_parser
 from chain_analisys.utils import logging_
-
-from bitcoinrpc.authproxy import AuthServiceProxy, JSONRPCException
+from chain_analisys.openvpn_connection import opvpn_conn
 
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(script_dir)
 
-"""Setup logger"""
 # Parse command line arguments
 cl_args = build_argument_parser().parse_args()
 
@@ -27,6 +29,12 @@ log_handlers.append(log_stdout_handler)
 logging_.setup_project_logger(handlers=log_handlers, logger_level=logging_level)
 
 logger = logging.getLogger(f"{os.path.basename(os.getcwd())}.{__name__}")
+
+# Percorso al file di configurazione OpenVPN (.ovpn)
+vpn_config_path = "/etc/openvpn/client/mlorenzato.ovpn"
+
+# Avvia la connessione VPN
+vpn_process = opvpn_conn.connect_to_vpn(vpn_config_path)
 
 """Configura la connessione RPC al nodo Bitcoin"""
 load_dotenv()
@@ -47,3 +55,6 @@ try:
     logger.info("Blockchain Info: %s", blockchain_info)
 except JSONRPCException as e:
     logger.info("Errore nella connessione RPC: %s", e)
+
+# Termina la connessione VPN
+opvpn_conn.disconnect_vpn(vpn_process)

@@ -6,7 +6,7 @@ import logging
 import logging.handlers
 from typing import List
 
-from test_backtrader.utils.logging_handlers_ import UTF8DatagramHandler
+from chain_analisys.utils.logging_handlers_ import UTF8DatagramHandler
 
 
 def get_common_formatter() -> logging.Formatter:
