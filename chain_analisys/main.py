@@ -6,6 +6,8 @@ from dotenv import load_dotenv
 
 from bitcoinrpc.authproxy import AuthServiceProxy, JSONRPCException
 
+from txs_analyzer.txs_analyzer import BlockchainAnalyzer
+
 from chain_analisys.parser.cl_parser import build_argument_parser
 from chain_analisys.utils import logging_
 from chain_analisys.openvpn_connection import opvpn_conn
@@ -55,6 +57,25 @@ try:
     logger.info("Blockchain Info: %s", blockchain_info)
 except JSONRPCException as e:
     logger.info("Errore nella connessione RPC: %s", e)
+
+db_params = {
+    "dbname": "blockchain_analyzer_db",
+    "user": "mlorenzato",
+    "password": "DioCane1!",
+    "host": "localhost",
+}
+
+# Crea un'istanza della classe BlockchainAnalyzer
+reset_db = True
+analyzer = BlockchainAnalyzer(
+    rpc_user, rpc_password, rpc_host, rpc_port, db_params, reset_db
+)
+
+# Itera su tutte le transazioni partendo dal blocco 0
+analyzer.iterate_all_transactions()
+
+# Chiudi la connessione
+analyzer.close()
 
 # Termina la connessione VPN
 opvpn_conn.disconnect_vpn(vpn_process)
