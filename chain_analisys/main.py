@@ -45,6 +45,9 @@ rpc_user = os.getenv("RPC_USER")
 rpc_password = os.getenv("RPC_PASSWORD")
 rpc_host = os.getenv("RPC_HOST")
 rpc_port = os.getenv("RPC_PORT")
+db_username = os.getenv("DB_USERNAME")
+db_password = os.getenv("DB_PASSWORD")
+db_host = os.getenv("DB_HOST")
 
 # Crea un'istanza di connessione al nodo
 rpc_connection = AuthServiceProxy(
@@ -60,9 +63,9 @@ except JSONRPCException as e:
 
 db_params = {
     "dbname": "blockchain_analyzer_db",
-    "user": "mlorenzato",
-    "password": "DioCane1!",
-    "host": "localhost",
+    "user": db_username,
+    "password": db_password,
+    "host": db_host,
 }
 
 # Crea un'istanza della classe BlockchainAnalyzer
