@@ -193,32 +193,43 @@ class BlockchainAnalyzer:
             print(f"Errore durante la riconnessione: {e}")
             time.sleep(5)  # Attendere prima di riprovare
             self.reconnect_rpc()
-
-    def iterate_all_transactions(self, start_block=100000):
+            
+    def iterate_all_transactions(self, start_block=1, max_retries=5):
         last_state = self.get_last_processed_state()
         last_tx, last_block = last_state if last_state else (None, start_block)
 
         block_height = last_block if last_block else start_block
         chain_info = self.rpc_connection.getblockchaininfo()
 
+        retries = 0  # Contatore dei tentativi di elaborazione falliti
+
         while block_height <= chain_info["blocks"]:
             try:
                 block_hash = self.rpc_connection.getblockhash(block_height)
                 block = self.rpc_connection.getblock(block_hash)
 
-                for txid in block["tx"]:
-                    if last_tx and txid <= last_tx:
-                        continue
+                block_processed = False  # Per verificare se almeno una transazione è stata elaborata
 
+                for txid in block["tx"]:
                     try:
                         self.process_transaction(txid, block_height)
+                        block_processed = True  # Una transazione è stata elaborata
                     except Exception as e:
                         print(f"Errore nell'elaborazione della transazione {txid}: {e}")
 
-                block_height += 1
-                print(f"Blocco {block_height} elaborato.")
+                # Se almeno una transazione è stata elaborata correttamente, si può procedere
+                if block_processed:
+                    block_height += 1
+                    retries = 0  # Reset del contatore di retry dopo un blocco elaborato
+                    print(f"Blocco {block_height} elaborato.")
+                else:
+                    print(f"Errore: Nessuna transazione elaborata nel blocco {block_height}. Tentativo di nuovo.")
+                    retries += 1
+                    if retries >= max_retries:
+                        print(f"Numero massimo di tentativi raggiunto per il blocco {block_height}. Interruzione del programma.")
+                        break
 
-                time.sleep(1)
+                #time.sleep(0.5)
 
             except (JSONRPCException, http.client.CannotSendRequest) as e:
                 print(f"Errore nella connessione RPC: {e}")
@@ -227,7 +238,11 @@ class BlockchainAnalyzer:
             except Exception as e:
                 print(f"Errore generico: {e}")
                 self.conn.rollback()
-                break
+                retries += 1
+                if retries >= max_retries:
+                    print(f"Numero massimo di tentativi raggiunto per il blocco {block_height}. Interruzione del programma.")
+                    break
+
 
     def get_input_addresses(self, inputs):
         addresses = []
@@ -340,8 +355,7 @@ class BlockchainAnalyzer:
         self.cursor.execute(
             f"""
             CREATE TABLE IF NOT EXISTS {table_name} (
-                id SERIAL PRIMARY KEY,
-                tx_id TEXT,
+                tx_id TEXT PRIMARY KEY,
                 input_output TEXT,
                 value NUMERIC DEFAULT 0,
                 block_height INT,
