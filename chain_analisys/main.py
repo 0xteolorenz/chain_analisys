@@ -62,7 +62,7 @@ except JSONRPCException as e:
     logger.info("Errore nella connessione RPC: %s", e)
 
 db_params = {
-    "dbname": "blockchain_analyzer_db",
+    "dbname": "blockchain_analisys",
     "user": db_username,
     "password": db_password,
     "host": db_host,
