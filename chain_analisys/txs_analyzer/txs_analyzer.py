@@ -5,6 +5,7 @@ import datetime
 import http.client
 import hashlib
 import base58
+import json
 
 
 class BlockchainAnalyzer:
@@ -35,17 +36,50 @@ class BlockchainAnalyzer:
         )
 
         tables = self.cursor.fetchall()
+
         print("Sto resettando il database, attendi...")
+
         # Elimina le tabelle in piccoli gruppi per ridurre il numero di lock simultanei
         for i in range(0, len(tables), 100):
             for table in tables[i : i + 100]:
                 table_name = f'"{table[0]}"'
                 self.cursor.execute(f"DROP TABLE IF EXISTS {table_name} CASCADE;")
             print(i)
-
             self.conn.commit()            
 
-        # Ricrea la tabella processed_state come Hypertable
+        # Crea la tabella tx_list con il nome corretto della colonna
+        self.cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tx_list (
+                id SERIAL,
+                txid TEXT,
+                block_number INT,
+                block_time TIMESTAMPTZ,
+                tx_type TEXT,
+                input_addresses JSONB,
+                output_addresses JSONB,
+                PRIMARY KEY (id, block_time),
+                UNIQUE (txid, block_time)
+            );
+            """
+        )
+        self.cursor.execute(
+            "SELECT create_hypertable('tx_list', 'block_time', if_not_exists => TRUE);"
+        )
+
+        # Crea un indice non univoco su txid per migliorare le query di ricerca
+        self.cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_txid ON tx_list (txid);"
+        )
+        self.conn.commit()
+
+        # Crea la tabella processed_state
+        self.initialize_processed_state()
+
+        print("Database resettato.")
+
+
+    def initialize_processed_state(self):
         self.cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS processed_state (
@@ -54,7 +88,6 @@ class BlockchainAnalyzer:
                 last_block_height INT,
                 block_time TIMESTAMPTZ NOT NULL,
                 PRIMARY KEY (id, block_time)
-
             );
             """
         )
@@ -63,25 +96,10 @@ class BlockchainAnalyzer:
         self.cursor.execute(
             "SELECT create_hypertable('processed_state', 'block_time', if_not_exists => TRUE);"
         )
-
-        self.conn.commit()
-        print("Database e stato di elaborazione resettati.")
-
-    def initialize_processed_state(self):
-        self.cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS processed_state (
-                id SERIAL PRIMARY KEY,
-                last_tx_id TEXT,
-                last_block_height INT,
-                block_time TIMESTAMPTZ NOT NULL
-            );
-            """
-        )
         
-        # Converte la tabella in Hypertable
+        # Crea un indice non univoco su last_tx_id per migliorare le query di ricerca
         self.cursor.execute(
-            "SELECT create_hypertable('processed_state', 'block_time', if_not_exists => TRUE);"
+            "CREATE INDEX IF NOT EXISTS idx_last_txid ON processed_state (last_tx_id);"
         )
         
         self.conn.commit()
@@ -147,7 +165,7 @@ class BlockchainAnalyzer:
             output_addresses = self.get_output_addresses(decoded_tx["vout"])  # Ora restituisce tuple (indirizzo, valore)
 
             # Raccogli gli indirizzi coinvolti e il loro valore
-            involved_addresses = list(set([addr for addr, _ in input_addresses] + [addr for addr, _ in output_addresses]))
+            involved_addresses = list({addr for addr, _ in input_addresses} | {addr for addr, _ in output_addresses})
 
             # Identifica il tipo di transazione
             tx_type = "coinbase" if decoded_tx.get("vin") and "coinbase" in decoded_tx["vin"][0] else "normal"
@@ -179,14 +197,7 @@ class BlockchainAnalyzer:
             )
 
             # Gestisci la transazione in base agli input e output
-            self.track_transaction(
-                input_addresses,
-                output_addresses,
-                txid,
-                block_height,
-                tx_type,
-                block_time
-            )
+            self.track_transaction(txid, block_height, block_time, tx_type, input_addresses, output_addresses)
 
             # Aggiorna lo stato con l'ultima transazione elaborata e il blocco
             self.update_processed_state(txid, block_height, block_time)
@@ -284,7 +295,7 @@ class BlockchainAnalyzer:
                 input_tx = self.rpc_connection.getrawtransaction(vin["txid"], 1)
                 output = input_tx["vout"][vin["vout"]]
                 script_pubkey = output["scriptPubKey"]
-                value = output["value"]  # Il valore associato all'output
+                value = float(output["value"])  # Il valore associato all'output
 
                 # Controlla se lo script è di tipo pubkeyhash (P2PKH) o scripthash (P2SH)
                 if script_pubkey["type"] in ["pubkeyhash", "scripthash"]:
@@ -305,7 +316,7 @@ class BlockchainAnalyzer:
 
         for vout in outputs:
             script_pubkey = vout["scriptPubKey"]
-            value = vout["value"]  # Il valore associato all'output
+            value = float(vout["value"])  # Il valore associato all'output
 
             # Controlla se ci sono indirizzi o chiavi pubbliche
             if script_pubkey.get("type") in ["pubkeyhash", "scripthash"]:
@@ -345,129 +356,33 @@ class BlockchainAnalyzer:
         address = base58.b58encode(binary_address).decode("utf-8")
         return address
 
-    def track_transaction(
-        self,
-        input_addresses,
-        output_addresses,
-        txid,
-        block_height,
-        tx_type,
-        block_time
-    ):
-        # Crea una lista di indirizzi coinvolti
-        involved_addresses = list(set(input_addresses + output_addresses))
-
-        transactions_to_store = []  # Lista per memorizzare le transazioni in batch
-
-        # Gestisci gli indirizzi di input
-        for address, value in input_addresses:
-            # Assicurati che la tabella esista
-            self.create_entity_table(address)
-            transactions_to_store.append(
-                (address, txid, "input", value, block_height, tx_type, involved_addresses, block_time)
-            )
-
-        # Gestisci gli indirizzi di output
-        for address, value in output_addresses:
-            # Assicurati che la tabella esista
-            self.create_entity_table(address)
-            transactions_to_store.append(
-                (address, txid, "output", value, block_height, tx_type, involved_addresses, block_time)
-            )
-
-        # Memorizza tutte le transazioni in batch
-        self.batch_store_transactions(transactions_to_store)
-    
-    def batch_store_transactions(self, transactions):
-        """
-        Memorizza un batch di transazioni nel database.
-        :param transactions: Una lista di tuple contenenti i dati delle transazioni.
-        """
-        # Inizio di una transazione
-        self.cursor.execute("BEGIN;")
-
+    def track_transaction(self, txid, block_number, block_time, tx_type, input_addresses, output_addresses):
         try:
-            for address, txid, input_output, value, block_height, tx_type, involved_addresses, block_time in transactions:
-                table_name = f'"{address.replace(" ", "_")}"'
-                self.cursor.execute(
-                    f"""
-                    INSERT INTO {table_name} (tx_id, input_output, value, block_height, type, involved_addresses, block_time)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (tx_id, block_time) DO UPDATE SET 
-                        input_output = EXCLUDED.input_output,
-                        value = EXCLUDED.value,
-                        block_height = EXCLUDED.block_height,
-                        type = EXCLUDED.type,
-                        involved_addresses = EXCLUDED.involved_addresses;
-                    """,
-                    (
-                        txid,
-                        input_output,
-                        value,
-                        block_height,
-                        tx_type,
-                        involved_addresses,
-                        block_time,
-                    ),
-                )
-            print("BATCH INSERITO")
-            # Impegno della transazione
-            self.conn.commit()
+            # Converti le liste di tuple in formato JSON
+            input_addresses_json = json.dumps(input_addresses)
+            output_addresses_json = json.dumps(output_addresses)
 
-        except Exception as e:
-            # Rollback in caso di errore
-            self.conn.rollback()
-            print(f"Errore durante l'inserimento in batch: {e}")
-
-
-
-    def create_entity_table(self, identifier):
-        # Sanitizza l'identificatore per prevenire SQL Injection
-        table_name = f'"{identifier.replace(" ", "_")}"'
-        
-        try:
-            # Crea la tabella se non esiste
             self.cursor.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS {table_name} (
-                    tx_id TEXT,
-                    input_output TEXT,
-                    value NUMERIC DEFAULT 0,
-                    block_height INT,
-                    type TEXT,
-                    involved_addresses TEXT[], -- Lista di indirizzi coinvolti
-                    block_time TIMESTAMPTZ NOT NULL,
-                    PRIMARY KEY (tx_id, block_time)
-                );
                 """
+                INSERT INTO tx_list (txid, block_number, block_time, tx_type, input_addresses, output_addresses)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (txid, block_time) DO NOTHING;
+                """,
+                (
+                    txid,
+                    block_number,
+                    block_time,
+                    tx_type,
+                    input_addresses_json,
+                    output_addresses_json,
+                ),
             )
-
-             # Converti in Hypertable
-            try:
-                self.cursor.execute(
-                    f"SELECT create_hypertable('{table_name}', 'block_time', if_not_exists => TRUE);"
-                )
-            except Exception as e:
-                print(f"La tabella {table_name} è già un hypertable o errore nella creazione: {e}")
-
             self.conn.commit()
-
         except Exception as e:
-            print(f"Errore durante la creazione della tabella {table_name}: {e}")
-            self.conn.rollback()  # Ripristina in caso di errore
+            self.conn.rollback()
+            print(f"Errore durante il salvataggio della transazione {txid}: {e}")
 
-    def is_entity_table_exists(self, identifier):
-        table_name = f'"{identifier.replace(" ", "_")}"'
-        self.cursor.execute(
-            f"""
-            SELECT EXISTS (
-                SELECT 1
-                FROM information_schema.tables
-                WHERE table_name='{table_name}'
-            );
-            """
-        )
-        return self.cursor.fetchone()[0]
+
 
     def close(self):
         self.cursor.close()
