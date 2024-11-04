@@ -1,0 +1,4 @@
+dotenv
+python-bitcoinrpc
+psycopg2-binary
+base58
