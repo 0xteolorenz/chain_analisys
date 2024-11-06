@@ -6,10 +6,13 @@ import http.client
 import hashlib
 import base58
 import json
+import logging
+import os
 
 
 class BlockchainAnalyzer:
     def __init__(self, rpc_user, rpc_password, rpc_host, rpc_port, db_params, reset_db):
+        self._logger = logging.getLogger(f"{os.path.basename(os.getcwd())}.{__name__}.{self.__class__.__name__}")
         self.rpc_user = rpc_user
         self.rpc_password = rpc_password
         self.rpc_host = rpc_host
@@ -37,17 +40,17 @@ class BlockchainAnalyzer:
 
         tables = self.cursor.fetchall()
 
-        print("Sto resettando il database, attendi...")
+        self._logger.info("Sto resettando il database, attendi...")
 
         # Elimina le tabelle in piccoli gruppi per ridurre il numero di lock simultanei
         for i in range(0, len(tables), 100):
             for table in tables[i : i + 100]:
                 table_name = f'"{table[0]}"'
                 self.cursor.execute(f"DROP TABLE IF EXISTS {table_name} CASCADE;")
-            print(i)
+            self._logger.debug(i)
             self.conn.commit()            
 
-        # Crea la tabella tx_list con il nome corretto della colonna
+        # Crea la tabella tx_list
         self.cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS tx_list (
@@ -76,7 +79,7 @@ class BlockchainAnalyzer:
         # Crea la tabella processed_state
         self.initialize_processed_state()
 
-        print("Database resettato.")
+        self._logger.info("Database resettato.")
 
 
     def initialize_processed_state(self):
@@ -133,25 +136,25 @@ class BlockchainAnalyzer:
         involved_addresses,
     ):
         if not input_addresses and not output_addresses:
-            print(
+            self._logger.debug(
                 f"Nessun indirizzo valido trovato nella transazione {txid}. Salto il blocco."
             )
             return
 
-        print(f"Transazione ID: {txid}")
-        print(f"Tipo di transazione: {tx_type}")
-        print(f"Blocco della transazione: {block_height}")
-        print(f"Valore della transazione: {value}")
-        print(f"Indirizzi coinvolti: {involved_addresses}")
+        self._logger.debug(f"Transazione ID: {txid}")
+        self._logger.debug(f"Tipo di transazione: {tx_type}")
+        self._logger.debug(f"Blocco della transazione: {block_height}")
+        self._logger.debug(f"Valore della transazione: {value}")
+        self._logger.debug(f"Indirizzi coinvolti: {involved_addresses}")
 
         if input_addresses:
-            print(f"INPUT INDIRIZZI TROVATI: {input_addresses}")
+            self._logger.debug(f"INPUT INDIRIZZI TROVATI: {input_addresses}")
         if output_addresses:
-            print(f"OUTPUT INDIRIZZI TROVATI: {output_addresses}")
+            self._logger.debug(f"OUTPUT INDIRIZZI TROVATI: {output_addresses}")
 
     def process_transaction(self, txid, block_height):
         try:
-            print(f"Elaborando la transazione: {txid}")
+            self._logger.debug(f"Elaborando la transazione: {txid}")
 
             if not isinstance(txid, str):
                 raise ValueError(f"txid deve essere una stringa, ricevuto: {type(txid)}")
@@ -159,7 +162,7 @@ class BlockchainAnalyzer:
             raw_tx = self.rpc_connection.getrawtransaction(str(txid))
             decoded_tx = self.rpc_connection.decoderawtransaction(raw_tx)
 
-            print(decoded_tx)
+            self._logger.debug(decoded_tx)
 
             input_addresses = self.get_input_addresses(decoded_tx["vin"])  # Ora restituisce tuple (indirizzo, valore)
             output_addresses = self.get_output_addresses(decoded_tx["vout"])  # Ora restituisce tuple (indirizzo, valore)
@@ -203,10 +206,10 @@ class BlockchainAnalyzer:
             self.update_processed_state(txid, block_height, block_time)
 
         except JSONRPCException as e:
-            print(f"Errore nell'elaborazione della transazione {txid}: {e}")
+            self._logger.warning(f"Errore nell'elaborazione della transazione {txid}: {e}")
             self.conn.rollback()
         except Exception as e:
-            print(f"Errore imprevisto: {e}")
+            self._logger.warning(f"Errore imprevisto: {e}")
             self.conn.rollback()
 
 
@@ -226,13 +229,13 @@ class BlockchainAnalyzer:
 
     def reconnect_rpc(self):
         try:
-            print("Tentativo di riconnessione al server RPC...")
+            self._logger.info("Tentativo di riconnessione al server RPC...")
             self.rpc_connection = AuthServiceProxy(
                 f"http://{self.rpc_user}:{self.rpc_password}@{self.rpc_host}:{self.rpc_port}"
             )
-            print("Riconnessione riuscita.")
+            self._logger.info("Riconnessione riuscita.")
         except Exception as e:
-            print(f"Errore durante la riconnessione: {e}")
+            self._logger.debug(f"Errore durante la riconnessione: {e}")
             time.sleep(5)  # Attendere prima di riprovare
             self.reconnect_rpc()
             
@@ -257,32 +260,32 @@ class BlockchainAnalyzer:
                         self.process_transaction(txid, block_height)
                         block_processed = True  # Una transazione è stata elaborata
                     except Exception as e:
-                        print(f"Errore nell'elaborazione della transazione {txid}: {e}")
+                        self._logger.warning(f"Errore nell'elaborazione della transazione {txid}: {e}")
 
                 # Se almeno una transazione è stata elaborata correttamente, si può procedere
                 if block_processed:
                     block_height += 1
                     retries = 0  # Reset del contatore di retry dopo un blocco elaborato
-                    print(f"Blocco {block_height} elaborato.")
+                    self._logger.info(f"Blocco {block_height} elaborato.")
                 else:
-                    print(f"Errore: Nessuna transazione elaborata nel blocco {block_height}. Tentativo di nuovo.")
+                    self._logger.warning(f"Errore: Nessuna transazione elaborata nel blocco {block_height}. Tentativo di nuovo.")
                     retries += 1
                     if retries >= max_retries:
-                        print(f"Numero massimo di tentativi raggiunto per il blocco {block_height}. Interruzione del programma.")
+                        self._logger.critical(f"Numero massimo di tentativi raggiunto per il blocco {block_height}. Interruzione del programma.")
                         break
 
                 #time.sleep(0.5)
 
             except (JSONRPCException, http.client.CannotSendRequest) as e:
-                print(f"Errore nella connessione RPC: {e}")
+                self._logger.debug(f"Errore nella connessione RPC: {e}")
                 self.reconnect_rpc()  # Tentativo di riconnessione
                 continue
             except Exception as e:
-                print(f"Errore generico: {e}")
+                self._logger.warning(f"Errore generico: {e}")
                 self.conn.rollback()
                 retries += 1
                 if retries >= max_retries:
-                    print(f"Numero massimo di tentativi raggiunto per il blocco {block_height}. Interruzione del programma.")
+                    self._logger.critical(f"Numero massimo di tentativi raggiunto per il blocco {block_height}. Interruzione del programma.")
                     break
 
 
@@ -380,7 +383,7 @@ class BlockchainAnalyzer:
             self.conn.commit()
         except Exception as e:
             self.conn.rollback()
-            print(f"Errore durante il salvataggio della transazione {txid}: {e}")
+            self._logger.warning(f"Errore durante il salvataggio della transazione {txid}: {e}")
 
 
 

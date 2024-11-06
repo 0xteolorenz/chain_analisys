@@ -71,7 +71,7 @@ db_params = {
 # Crea un'istanza della classe BlockchainAnalyzer
 reset_db = False
 analyzer = BlockchainAnalyzer(
-    rpc_user, rpc_password, rpc_host, rpc_port, db_params, reset_db
+    rpc_user, rpc_password, rpc_host, rpc_port, db_params, False
 )
 
 # Itera su tutte le transazioni partendo dal blocco 0
